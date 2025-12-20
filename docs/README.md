@@ -1,1 +1,1 @@
-<img src="docs/Arch_Diagram.png" alt="Architecture Diagram" width="100%"/>
+<img src="./Arch_Diagram.png" alt="Architecture Diagram" width="100%"/>
