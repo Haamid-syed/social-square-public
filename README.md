@@ -72,8 +72,10 @@ Potential next steps include:
 * Fault-tolerant room recovery
 * Metrics and latency observability
 
+Note : Currently, Only the core feature along some frontend is implemented.
+
 Demo
-* Live deployment: (link if you want to add it)
+* Live deployment: [(link if you want to add it)](https://www.socialsquare.tech/)
 * Screenshots and videos are available in /docs
 
 Source Code Access
