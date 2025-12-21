@@ -76,7 +76,6 @@ Note : Currently, Only the core features (game ui, sockets and webRTC logic) alo
 
 Demo
 * Live deployment: https://www.socialsquare.tech/
-* Screenshots and videos are available in /docs
 
 Source Code Access
 The full implementation is maintained in a private repository. Read-only access can be provided for interview or evaluation purposes upon request.
