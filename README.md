@@ -75,7 +75,7 @@ Potential next steps include:
 Note : Currently, Only the core features (game ui, sockets and webRTC logic) along with some frontend is implemented.
 
 Demo
-* Live deployment: [(https://www.socialsquare.tech/)]
+* Live deployment: https://www.socialsquare.tech/
 * Screenshots and videos are available in /docs
 
 Source Code Access
