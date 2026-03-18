@@ -1,3 +1,5 @@
+(Note : This repo only contains the outline and system architecture of the project. I'll update the repo with the latest updates in the project soon)
+
 Social Square - Real-Time Multiplayer Social Platform (Gather-Town-like)
 Social Square is a browser-based multiplayer social environment where users can move around shared 2D spaces, see other players in real time, and communicate via proximity-based voice chat. The project focuses on low-latency real-time systems, room lifecycle management, and scalable WebRTC communication, rather than visual polish alone.
 
