@@ -54,8 +54,8 @@ flowchart LR
     subgraph Runtime["Single Node.js container"]
         Listener["Express / HTTP listener"]
         Next["Next.js pages + route handlers"]
-        SocketServer["Socket.IO server"]
-        TokenRoute["LiveKit token route"]
+        SocketServer["Authenticated Socket.IO handler"]
+        TokenRoute["Authenticated LiveKit token route"]
         Memory["In-memory room registry"]
 
         Listener --> Next
@@ -86,11 +86,11 @@ Development and production start the custom server, not a standalone `next start
 | Page/UI rendering | Next.js + React | HTTP, React props/state | Browser session |
 | Shared user state | Zustand | In-process client store/local storage | Partially browser-persisted |
 | World rendering and collisions | Phaser scene | Game loop + browser events | Browser session |
-| Player synchronization | Socket.IO | WebSocket/fallback transport | Server memory + live broadcasts |
-| Chat | Socket.IO + React component | Room broadcast | Browser state only |
+| Player synchronization | Authenticated Socket.IO | WebSocket-first/fallback transport | Server memory + live broadcasts |
+| Chat | Socket.IO + React component | Server-bound room broadcast | Browser state capped at 300 messages |
 | Owner and role coordination | Socket.IO server | Validated room events | Server memory |
 | Audio/video/screen share | LiveKit | WebRTC through hosted SFU | Live media session |
-| Media authorization | Express token route | HTTPS token request | Short-lived signed grant |
+| Media authorization | Express token route + shared JWT identity | Authenticated HTTPS request | Short-lived identity-bound grant |
 | Accounts and profiles | Next.js route handlers + Prisma | HTTPS/SQL | PostgreSQL |
 | Route authorization | Next.js proxy + JWT helpers | HTTP-only cookies | Signed token + database refresh allowlist |
 | Delivery | GitHub Actions + AWS services | Image push + remote command | Container/image registry |
@@ -114,7 +114,7 @@ flowchart TB
     end
 
     subgraph Page["Browser-page lifetime"]
-        Chat["Visible chat history"]
+        Chat["Visible chat history\nmaximum 300 messages"]
         Panel["Open panels and control state"]
         Game["Local Phaser objects"]
     end
@@ -125,7 +125,7 @@ flowchart TB
     end
 ```
 
-The durable room schema currently describes future room configuration and membership. The live join path does not create or query those rows. Any non-empty room ID can currently create an in-memory room, and that room disappears after its final participant leaves or the process restarts.
+The durable room schema currently describes future room configuration and membership. The live join path does not create or query those rows. Any authenticated user with a syntactically valid room ID can currently create an in-memory room, and that room disappears after its final participant leaves or the process restarts.
 
 ## End-to-end room entry
 
@@ -140,8 +140,8 @@ sequenceDiagram
 
     User->>Page: Navigate to /room/{roomId}
     par Multiplayer setup
-        Page->>Socket: Connect, identify, join room
-        Socket-->>Page: Existing players + room state
+        Page->>Socket: Connect with access cookie, then join room
+        Socket-->>Page: Initial room-state-update
         Page-->>Game: Forward room-state browser event
         Socket-->>Game: Player join/move/leave callbacks
     and World setup
@@ -161,9 +161,9 @@ The three branches begin from the room integration surface and complete independ
 
 1. Phaser reads keyboard state during its update loop and applies local velocity.
 2. Arcade Physics resolves local collision against configured tile layers.
-3. When coordinates change, the client emits position and active animation.
-4. The server updates the player's in-memory record and relays the event to the rest of the Socket.IO room.
-5. Each remote client creates or repositions the matching sprite and plays the reported animation.
+3. While moving, the client emits position and animation snapshots at no more than 20 Hz; stopping emits an immediate final snapshot.
+4. The server rejects non-finite coordinates, updates the player's in-memory record, and relays the event only to the socket's server-tracked room.
+5. Each remote client stores the latest target and interpolates its sprite toward that position during the display-rate render loop. Gaps above the correction threshold snap immediately.
 
 This is a relay-authoritative room registry, but not a fully server-simulated game. The browser calculates movement and collision; the server records and rebroadcasts the client-provided result. See [Design decisions](DESIGN_DECISIONS.md#movement-authority) for the consequence.
 
@@ -185,10 +185,18 @@ The application server never forwards media. Each participant connects once to t
 - The browser is untrusted. Form inputs are validated again in route handlers.
 - Access and refresh tokens live in HTTP-only cookies, limiting direct JavaScript access.
 - Refresh JWTs are checked against a database record, enabling revocation.
+- Socket.IO rejects missing or invalid access-token cookies and derives the participant identity from the verified JWT.
 - Only the active Socket.IO owner may change user roles or table assignments.
+- Realtime events use the socket's server-tracked room rather than trusting a client-supplied room ID. Room IDs, coordinates, chat length, and allowed role values are validated.
 - OAuth state cookies protect callback flows against cross-site request forgery.
-- Media signing secrets remain server-side; the browser receives only a scoped signed token.
-- The current media-token endpoint checks room/username presence but does not yet require an authenticated application session or durable room membership. This is a documented hardening item.
+- Media signing secrets remain server-side; the endpoint requires a valid application access cookie, rejects username mismatches, validates the room ID, and binds the grant to the authenticated identity.
+- Durable `RoomMember` authorization is not yet enforced because the live room path remains independent of the database-backed room model.
+
+## Verification boundary
+
+The production Socket.IO handler is extracted from the process entry point so integration tests and the load harness exercise the same implementation used by the application. The current suite covers authentication, room isolation, lifecycle behavior, authorization, movement throttling, and interpolation. The local benchmark separately measures transport latency, delivery integrity, and process resources with metrics disabled by default outside benchmark runs.
+
+See [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md) for results and scope limits.
 
 ## Scaling boundary
 

@@ -7,6 +7,7 @@ This document maps the private repository by responsibility without reproducing 
 ```text
 Social-Square/
 ├── .github/workflows/deploy.yml      CI/CD pipeline
+├── benchmarks/                       Load harness, thresholds, and evidence
 ├── prisma/
 │   ├── schema.prisma                 Durable domain model
 │   └── migrations/                   Versioned PostgreSQL changes
@@ -22,16 +23,21 @@ Social-Square/
 │   │   └── ...                       Landing, auth, onboarding, profile, settings
 │   ├── components/                   Room and shared React UI
 │   ├── lib/
-│   │   ├── game/                     Phaser lifecycle and scene logic
+│   │   ├── game/                     Phaser lifecycle, scene, movement policy
 │   │   ├── sockets/                  Socket.IO client adapter
 │   │   ├── video/                    LiveKit and media-element lifecycle
 │   │   ├── auth.ts                   Node authentication helpers
 │   │   ├── auth-edge.ts              Edge-compatible JWT verification
 │   │   ├── prisma.ts                 Prisma singleton
 │   │   └── validations.ts            Zod schemas
-│   ├── proxy.ts                      Current route-protection entry point
-│   └── middleware.ts                 Legacy duplicate pending removal
-├── server.ts                         Custom HTTP/WebSocket server
+│   ├── server/
+│   │   ├── socketServer.ts           Authenticated realtime room engine
+│   │   └── livekitAuth.ts            Media-token authorization boundary
+│   └── proxy.ts                      Next.js 16 route protection
+├── tests/                             Movement, media-auth, and socket tests
+├── server.ts                         Custom HTTP/WebSocket entry point
+├── benchmarks_results.md             Canonical private evidence report
+├── changes.md                        Implementation change record
 ├── Dockerfile                        Production image definition
 ├── next.config.ts                    Next.js configuration
 ├── prisma.config.ts                  Prisma configuration
@@ -43,8 +49,8 @@ Social-Square/
 ```mermaid
 flowchart TD
     Server["server.ts"] --> Next["Next.js application"]
-    Server --> SocketServer["Socket.IO server"]
-    Server --> Token["LiveKit token endpoint"]
+    Server --> SocketServer["socketServer.ts"]
+    Server --> TokenAuth["livekitAuth.ts"]
 
     RoomPage["room/[roomId]/page.tsx"] --> Canvas["gameCanvas.tsx"]
     RoomPage --> Toolbar["BottomToolbar.tsx"]
@@ -54,6 +60,7 @@ flowchart TD
 
     Canvas --> GameInit["gameInit.ts"]
     Canvas --> Scene["gameScene.ts"]
+    Scene --> Movement["movementSync.ts"]
     Canvas --> SocketInit["socketInit.ts"]
     Canvas --> VideoInit["videoInit.ts"]
     VideoInit --> MediaDOM["handleVideo.ts"]
@@ -62,28 +69,46 @@ flowchart TD
     API --> Validation["validations.ts"]
     API --> Prisma["prisma.ts"]
     Prisma --> Schema["schema.prisma"]
+
+    Tests["tests/"] --> Movement
+    Tests --> SocketServer
+    Tests --> TokenAuth
+    Bench["benchmark harness"] --> SocketServer
 ```
 
 ## Server and infrastructure
 
 ### `server.ts`
 
-The process entry point and central coordination boundary.
+The lightweight process entry point and shared-listener boundary.
 
 - Prepares Next.js and creates the shared Express/HTTP listener.
 - Mounts Socket.IO at `/api/socket`.
-- Owns the in-memory map of active rooms, players, owner, user roles, and table assignments.
-- Handles join, movement, chat, role assignment, explicit leave, disconnect cleanup, owner handoff, and empty-room deletion.
-- Issues scoped LiveKit join/publish/subscribe tokens.
+- Registers the extracted authenticated realtime handler.
+- Delegates LiveKit request authorization to the extracted media-auth module before signing scoped grants.
 - Delegates all remaining HTTP requests to Next.js.
 
-**Depends on:** Express, Node HTTP, Next.js, Socket.IO server, LiveKit Server SDK, environment configuration.
+The process depends on Express, Node HTTP, Next.js, Socket.IO, the LiveKit Server SDK, extracted server modules, and environment configuration.
 
-**Consumed by:** Browser Socket.IO clients and the complete HTTP application.
+### `src/server/socketServer.ts`
+
+Owns the realtime room engine used by production, integration tests, and the benchmark harness.
+
+- Parses the access-token cookie during the Socket.IO handshake and rejects missing or invalid sessions.
+- Stores verified user identity and joined room on the server-side socket.
+- Validates room IDs, finite movement coordinates, message content/length, and allowed role values.
+- Owns the in-memory map of active rooms, players, owner, user roles, and table assignments.
+- Handles join, movement, chat, role assignment, explicit leave, disconnect cleanup, owner handoff, and empty-room deletion.
+- Uses one cleanup path for explicit leave and disconnect behavior.
+- Exposes optional detailed counters for tests and benchmarks; normal production handling does not increment benchmark-only metrics.
+
+### `src/server/livekitAuth.ts`
+
+Validates LiveKit token requests independently of token signing. It requires an authenticated application cookie, rejects identity mismatch, validates room IDs, and returns the verified identity and room grant input. Focused authorization tests exercise this boundary directly.
 
 ### `Dockerfile`
 
-A two-stage Node 20 image definition. The builder installs dependencies, generates Prisma artifacts, builds Next.js, compiles the custom server, and prunes development packages. The runner contains the production dependencies, Next output, public assets, Prisma files, and compiled server.
+A two-stage Node 20 image definition. The builder installs dependencies, generates Prisma artifacts, builds Next.js, compiles the custom server and imported server modules, and prunes development packages. The runner contains production dependencies, Next output, public assets, Prisma files, and compiled server output.
 
 ### `.github/workflows/deploy.yml`
 
@@ -95,15 +120,15 @@ The main-branch delivery workflow. It builds a Linux AMD64 image, pushes it to E
 
 The React composition root for a live room.
 
-- Owns media connection and toolbar state: connected, mic, camera, screen share, and loading flags.
-- Owns panel state: meeting, chat, and participant views.
+- Owns media connection and toolbar state: connected, microphone, camera, screen share, and loading flags.
+- Owns meeting, chat, and participant panel state.
 - Receives the initialized Socket.IO client and LiveKit room from the game wrapper.
-- Listens for room-state broadcasts and forwards them to Phaser with a browser `CustomEvent`.
-- Derives participant count and local control state from LiveKit events.
+- Receives room state through the socket initializer's already-active listener and forwards it to Phaser with a browser `CustomEvent`.
+- Updates participant counts from LiveKit connect/disconnect events rather than polling.
 - Positions the floating local video bubble using Phaser player/camera coordinates.
 - Emits explicit leave before navigating away.
 
-It acts as the orchestration layer. Phaser handles the world, Socket.IO handles coordination, LiveKit handles media, and focused React components handle panels.
+Phaser handles the world, Socket.IO handles coordination, LiveKit handles media, and focused React components handle panels.
 
 ### `src/components/BottomToolbar.tsx`
 
@@ -111,11 +136,11 @@ Presentation and interaction surface for microphone, camera, screen sharing, mee
 
 ### `src/components/ParticipantsList.tsx`
 
-Builds the participant view from LiveKit media state and Socket.IO room state. It shows media indicators and exposes owner-only role/table assignment controls. Role mutations return to the server, where ownership is validated.
+Builds the participant view from LiveKit media state and Socket.IO room state. It shows media indicators and exposes owner-only role/table controls. Rebuilds are debounced, participant matching uses a username index, and role mutations omit client-authoritative room IDs before returning to the server for validation.
 
 ### `src/components/RoomChat.tsx`
 
-Owns visible chat history for the current mounted page. It publishes messages through Socket.IO, consumes room broadcasts, creates join/leave system notices, applies local/remote sender styling, and keeps the newest message visible. History is not stored server-side.
+Owns visible chat history for the mounted room page. It publishes only message content and timestamp, consumes room broadcasts, creates join/leave notices, applies sender styling, caps history at 300 messages, and schedules the newest-message scroll through one animation frame. History is not stored server-side.
 
 ### `src/components/VideoGrid.tsx`
 
@@ -129,9 +154,9 @@ The React-to-imperative lifecycle bridge.
 
 - Creates and retains Phaser game, Socket.IO client, LiveKit room, and media-element references.
 - Initializes sockets, the game, and LiveKit when a username is available.
-- Reports initialized transports back to the room page.
+- Reports initialized transports and room state to the room page.
 - Performs coordinated cleanup on unmount.
-- Contains the disabled proximity-audio consumer, documenting the intended future link from spatial distance to media volume.
+- Retains a commented proximity-audio consumer, but no active distance emitter feeds it.
 
 ### `src/lib/game/gameInit.ts`
 
@@ -143,19 +168,22 @@ Owns real-time world behavior.
 
 - Loads the Tiled map, tilesets, and player sprite sheet.
 - Creates floor, wall, border, furniture, object, and hidden collision layers.
-- Configures local sprite physics, directional animation, keyboard input, camera follow/bounds, responsive zoom, and world bounds.
-- Creates/removes/updates remote sprites from Socket.IO callbacks.
-- Emits movement only when local coordinates change.
+- Configures local sprite physics, animation, keyboard input, camera follow/bounds, responsive zoom, and world bounds.
+- Creates, removes, and updates remote sprite targets from Socket.IO callbacks.
+- Emits movement snapshots at no more than 20 Hz while moving and sends a final stop snapshot immediately.
+- Interpolates remote sprites with a frame-rate-independent factor and snaps corrections above 200 world units.
 - Renders four table labels from room state and detects local entry into table zones.
-- Calculates distances to named remote players every 100 ms and dispatches browser proximity events.
+- Does not run the earlier unused avatar-distance calculation.
 
-The scene does not own authentication, durable rooms, chat rendering, or media transport.
+### `src/lib/game/movementSync.ts`
 
-## Real-time adapters
+Defines the shared 20 Hz snapshot rate, the decision to send moving/final-stop snapshots, and the bounded frame-rate-independent interpolation factor. Unit tests and the benchmark harness use the same policy source.
+
+## Real-time and media adapters
 
 ### `src/lib/sockets/socketInit.ts`
 
-Creates the same-origin Socket.IO connection at `/api/socket`, publishes the username handshake, joins the requested room, and maps network events into Phaser scene methods. It temporarily buffers the initial player snapshot when the socket becomes ready before the Phaser scene does.
+Creates the same-origin Socket.IO connection at `/api/socket` using the HTTP-only access cookie, tries WebSocket first with polling fallback, joins the requested room, and maps network events into Phaser scene methods. One active room-state listener supplies React state and initial Phaser hydration, avoiding the earlier startup race and duplicate listener.
 
 ### `src/lib/sockets/socketConnection.ts`
 
@@ -163,11 +191,11 @@ A supporting socket connection module retained in the repository. The active roo
 
 ### `src/lib/video/videoInit.ts`
 
-Requests a LiveKit token, creates the LiveKit room, configures adaptive streaming/dynacast, attaches participant and reconnect listeners, connects with bounded retries, captures local microphone/camera tracks, and publishes them. Existing and newly subscribed remote publications are passed to the media-element layer.
+Requests an authenticated LiveKit token, creates the LiveKit room, configures adaptive streaming/dynacast, attaches participant and reconnect listeners, connects with bounded retries, captures local microphone/camera tracks, and publishes them. Existing and newly subscribed remote publications pass to the media-element layer.
 
 ### `src/lib/video/handleVideo.ts`
 
-Owns DOM media-element creation, attachment, detachment, participant cleanup, whole-room disconnect, and map cleanup. This isolates mutable `<video>`/`<audio>` handling from the React/Phaser integration code.
+Owns DOM media-element creation, attachment, detachment, participant cleanup, whole-room disconnect, and map cleanup. This isolates mutable media-element handling from React/Phaser integration code.
 
 ## Identity and application state
 
@@ -183,21 +211,17 @@ Runs session hydration for the React application, fetching the current authentic
 
 Redirects authenticated users whose profile is incomplete into onboarding before protected product use.
 
-### `src/lib/auth.ts`
+### `src/lib/auth.ts` and `src/lib/auth-edge.ts`
 
-Node-side password and JWT helpers: bcrypt hashing/comparison, access/refresh token creation, token verification, expiry calculation, and cookie-related values.
-
-### `src/lib/auth-edge.ts`
-
-Edge-compatible token verification used by the route-protection layer, avoiding Node-only dependencies in that runtime.
+Provide password/JWT behavior across Node and Edge runtimes. The Node helpers own bcrypt and token creation/verification; the Edge-compatible helper supports proxy route checks.
 
 ### `src/lib/validations.ts`
 
-Central Zod schemas for signup, login, profile/onboarding data, and room-related inputs. Validation at the API boundary prevents trusting browser-only checks.
+Central Zod schemas for signup, login, profile/onboarding data, and room-related inputs. Validation at the API boundary prevents relying on browser-only checks.
 
-### `src/proxy.ts` and `src/middleware.ts`
+### `src/proxy.ts`
 
-`proxy.ts` is the Next.js 16 route-protection implementation. It protects room and account surfaces and redirects already-authenticated users away from login/signup. `middleware.ts` is a legacy duplicate. Their simultaneous presence currently blocks a clean Next.js 16.2.x build.
+The single Next.js 16 route-protection implementation. It protects room and account surfaces and redirects already-authenticated users away from login/signup. The empty legacy middleware was removed, restoring the production build.
 
 ## Data and routes
 
@@ -207,8 +231,22 @@ Defines users, durable refresh tokens, planned durable rooms, room membership, a
 
 ### `src/app/api/**/route.ts`
 
-Next.js route handlers implement signup/login/logout/refresh, current-user lookup, password change/reset, OAuth starts/callbacks, profile updates, and avatar upload. The LiveKit token route is the exception: it lives in `server.ts` because it is part of the custom Express server.
+Next.js route handlers implement signup/login/logout/refresh, current-user lookup, password change/reset, OAuth starts/callbacks, profile updates, and avatar upload. The LiveKit token route remains in `server.ts` because it belongs to the custom Express server, with its authorization logic extracted into `src/server/livekitAuth.ts`.
+
+## Verification and performance assets
+
+### `tests/`
+
+Contains three movement-policy unit tests, three LiveKit authorization tests, and four Socket.IO integration tests. The integration suite starts temporary servers around the production realtime handler.
+
+### `benchmarks/`
+
+Contains the authenticated Socket.IO load harness, protocol server wrapper, predeclared thresholds, runbook, result manifest, and 18 raw baseline/optimized/capacity/soak/validation artifacts. See the public [verification report](VERIFICATION_AND_BENCHMARKS.md) for results and limitations.
+
+### `changes.md` and `benchmarks_results.md`
+
+Private-repository documents that record the security/correctness/performance change set and the canonical detailed benchmark report. Their public-safe findings are incorporated throughout this blueprint.
 
 ## Public pages and shared UI
 
-The App Router also contains the landing page, FAQ, authentication screens, onboarding, join-room flow, loader, profile, settings, and reset-password UI. Shared UI primitives live under `src/components/ui/` and are composed with Tailwind CSS, Radix primitives, shadcn-style patterns, and motion libraries.
+The App Router also contains the landing page, FAQ, authentication screens, onboarding, join-room flow, loader, profile, settings, and reset-password UI. Shared UI primitives live under `src/components/ui/` and are composed with Tailwind CSS, Radix primitives, shadcn-style patterns, and Framer Motion.

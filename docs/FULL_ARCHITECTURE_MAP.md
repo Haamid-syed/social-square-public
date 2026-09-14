@@ -45,8 +45,8 @@ flowchart TB
         Entry["server.ts · custom Node entry point"]
         Express["Express + HTTP server"]
         Next["Next.js pages and route handlers"]
-        SocketServer["Socket.IO · /api/socket"]
-        MediaToken["LiveKit token endpoint"]
+        SocketServer["Authenticated Socket.IO\nsocketServer.ts"]
+        MediaToken["Authenticated LiveKit grant\nlivekitAuth.ts"]
         Rooms["In-memory rooms"]
 
         Entry --> Express
@@ -85,6 +85,16 @@ flowchart TB
         ECR --> EC2
     end
 
+    subgraph Evidence["Verification path"]
+        Tests["10 focused tests"]
+        Harness["Authenticated load harness"]
+        Results["Thresholds + 18 artifacts"]
+        Tests --> SocketServer
+        Tests --> MediaToken
+        Harness --> SocketServer
+        Harness --> Results
+    end
+
     Browser <-->|HTTPS| Next
     SocketClient <-->|WebSocket / fallback| SocketServer
     LKClient <-->|WebRTC| SFU
@@ -112,12 +122,13 @@ Auth page
 
 ```text
 Room page
--> Socket.IO connect and username handshake
+-> Socket.IO connect with access cookie
 -> join-room
--> server creates/loads in-memory room
--> existing player snapshot + room state
+-> server validates ID and creates/loads in-memory room
+-> room-state-update initial snapshot
 -> Phaser remote sprites
--> movement events relayed to peers
+-> 20 Hz movement snapshots relayed to joined-room peers
+-> render-rate remote interpolation
 -> leave/disconnect cleanup + owner handoff
 ```
 
@@ -125,8 +136,9 @@ Room page
 
 ```text
 Room page
--> application media-token endpoint
--> signed LiveKit room grant
+-> authenticated application media-token endpoint
+-> session, identity, and room validation
+-> signed identity-bound LiveKit room grant
 -> LiveKit SFU connection
 -> local mic/camera publication
 -> remote subscriptions
@@ -159,20 +171,35 @@ Push to private main
 -> custom Node server starts on port 3003
 ```
 
+### Verification path
+
+```text
+Production realtime and media-authorization modules
+-> movement and authorization unit tests
+-> authenticated Socket.IO integration tests
+-> isolated child-process load harness
+-> predeclared validity and workload thresholds
+-> baseline, optimized, capacity, soak, and validation artifacts
+-> public scope-qualified result report
+```
+
 ## Important private files
 
 | Area | File | Responsibility |
 |---|---|---|
-| Process | `server.ts` | Next.js preparation, Express listener, Socket.IO room server, LiveKit token route |
+| Process | `server.ts` | Next.js preparation, Express listener, server-module registration, LiveKit token signing |
+| Realtime server | `src/server/socketServer.ts` | Socket authentication, validation, room registry, events, cleanup, optional metrics |
+| Media authorization | `src/server/livekitAuth.ts` | Session, identity, and room validation before token signing |
 | Room composition | `src/app/room/[roomId]/page.tsx` | Integrates game, sockets, media, panels, controls, and video bubble |
 | Game lifecycle | `src/lib/game/gameCanvas.tsx` | Creates/cleans Phaser, Socket.IO, LiveKit, and media elements |
 | Phaser setup | `src/lib/game/gameInit.ts` | Game configuration and teardown |
-| World logic | `src/lib/game/gameScene.ts` | Map, physics, movement, remote sprites, tables, proximity distances |
-| Socket adapter | `src/lib/sockets/socketInit.ts` | Same-origin connection, join, snapshot buffer, scene event mapping |
+| World logic | `src/lib/game/gameScene.ts` | Map, physics, 20 Hz snapshots, remote interpolation, tables |
+| Movement policy | `src/lib/game/movementSync.ts` | Shared send-rate, final-stop, and interpolation policy |
+| Socket adapter | `src/lib/sockets/socketInit.ts` | Authenticated same-origin connection, join, initial state, scene mapping |
 | Media connection | `src/lib/video/videoInit.ts` | Token fetch, LiveKit connect/retry, local publish, remote subscription |
 | Media DOM | `src/lib/video/handleVideo.ts` | Media attachment/detachment and cleanup |
 | Meeting UI | `src/components/VideoGrid.tsx` | Participant, camera, mute, and screen-share tiles |
-| Chat UI | `src/components/RoomChat.tsx` | Current-session messages and join/leave notices |
+| Chat UI | `src/components/RoomChat.tsx` | Capped current-session messages, join/leave notices, scheduled scroll |
 | Coordination UI | `src/components/ParticipantsList.tsx` | Presence/media status and owner role/table controls |
 | Controls | `src/components/BottomToolbar.tsx` | Media, panels, screen share, and leave actions |
 | Client identity | `src/app/state/atoms.tsx` | Zustand auth/user state |
@@ -182,6 +209,8 @@ Push to private main
 | Access gate | `src/proxy.ts` | Protected/public route redirects |
 | Container | `Dockerfile` | Multi-stage production image |
 | Delivery | `.github/workflows/deploy.yml` | ECR build/push and SSM-driven EC2 replacement |
+| Tests | `tests/` | Movement, media authorization, and realtime integration coverage |
+| Benchmarks | `benchmarks/` | Authenticated load harness, thresholds, telemetry, and raw artifacts |
 
 ## State map
 
@@ -191,9 +220,9 @@ Push to private main
 | Refresh/reset token | PostgreSQL + signed token | Until expiry/revocation | HTTP cookie + database record |
 | Durable room definition | PostgreSQL schema | Durable | Not used by current room path |
 | Active room membership | Socket.IO server memory | Process/room lifetime | `room-state-update` snapshots |
-| Position/animation | Local client then server registry | Live connection | `player-move` events |
+| Position/animation | Local client then server registry | Live connection | 20 Hz `player-move` snapshots plus render interpolation |
 | Owner/user roles/tables | Socket.IO server memory | Process/room lifetime | Server-validated state broadcasts |
-| Chat | Each browser | Mounted page lifetime | Live broadcast only, no replay |
+| Chat | Each browser, maximum 300 messages | Mounted page lifetime | Live broadcast only, no replay |
 | Camera/mic/screen | LiveKit | Media session | SFU publications/subscriptions |
 | UI panel/control state | React component state | Mounted room page | Local only |
 
@@ -201,14 +230,14 @@ Push to private main
 
 | Concern | Current architecture | Next stage |
 |---|---|---|
-| Rooms | Any non-empty ID creates/joins ephemeral state | Authenticated, durable, policy-enforced rooms |
+| Rooms | Authenticated users join syntactically valid ephemeral IDs | Durable, membership- and policy-enforced rooms |
 | Scaling | One application process | Shared adapter/state and multiple replicas |
-| Movement | Client-calculated, direct remote updates | Validated, sequenced, interpolated updates |
-| Proximity | Distances emitted; media handlers disabled | Feature-flagged attenuation/visibility with UX controls |
+| Movement | Client physics, 20 Hz snapshots, finite-coordinate checks, remote interpolation | Speed/map validation and sequence-aware recovery where required |
+| Proximity | Distance emission removed; media remains room-wide | Feature-flagged attenuation/visibility with UX controls |
 | Chat | Live, browser-only | Optional durable history with moderation/retention policy |
 | Uploads | Container-local | Object storage/CDN |
 | Delivery | Mutable tag, container replacement | Immutable releases, health checks, rollback, drain |
-| Quality gates | Known build/lint/type failures | Required CI checks plus automated tests |
+| Quality gates | Build/type-check and 10 focused tests pass; lint script stale | Required CI gates plus broad API/browser/media coverage |
 
 ## Detailed references
 
@@ -218,4 +247,5 @@ Push to private main
 - [Data, authentication, and API](DATA_AUTH_API.md)
 - [Deployment and operations](DEPLOYMENT_OPERATIONS.md)
 - [Architecture decisions](DESIGN_DECISIONS.md)
+- [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md)
 - [Current state and roadmap](CURRENT_STATE.md)

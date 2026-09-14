@@ -111,7 +111,7 @@ sequenceDiagram
 |---|---|---:|
 | User/profile/token rows | Managed PostgreSQL | Yes |
 | Active room registry | Node process memory | No |
-| Chat history | Connected browser memory | No |
+| Chat history | Connected browser memory, capped at 300 messages | No |
 | Live media | LiveKit session | No; clients reconnect |
 | Uploaded avatars | Container public directory | Not reliably |
 | Application logs | Container/host output | Depends on host log retention |
@@ -130,23 +130,23 @@ The current rollout is a **single-container replacement**, not a rolling or blue
 
 ## Current operational verification
 
-The private repository was checked on 14 September 2026:
+The private repository records the following verification results on 15 September 2026:
 
 | Command | Result | Evidence |
 |---|---|---|
-| `npm run build` | Fails before compilation | Next.js 16.2.x detects both legacy `middleware.ts` and `proxy.ts` |
-| `npm run lint` | Fails at command invocation | The script still calls the removed `next lint` path |
-| `npx tsc --noEmit` | Fails with two errors | Possibly undefined database URL in Prisma config; nullable OAuth password hash passed to bcrypt in password change |
+| `npm run typecheck` | Pass | Standalone TypeScript check completed without emitting files |
+| `npm test` | Pass: 10/10 | Movement, media authorization, Socket.IO authentication/isolation/lifecycle |
+| `npm run build` | Pass | Next.js 16.2.3 production build generated or registered 27 routes/pages |
+| Docker server TypeScript compilation | Pass | Custom server and imported modules emitted to a temporary directory |
+| `npm run lint` | Known stale script | Still calls the removed `next lint` command; not represented as passing |
 
-`next.config.ts` currently allows production builds to ignore TypeScript build errors, but the middleware/proxy conflict occurs earlier and still stops a fresh build. These findings are documented so the public blueprint does not imply a green pipeline that the audited checkout cannot reproduce.
+The empty legacy middleware and TypeScript build-error suppression were removed. Prisma configuration and nullable password-hash typing were corrected. See [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md) for test coverage and measured Socket.IO results.
 
 ## Operations checklist for the next production stage
 
 ### Build and release
 
-- Remove the legacy middleware/proxy conflict.
-- replace `next lint` with direct ESLint invocation and enforce it in CI.
-- make standalone type checking green and required.
+- Replace `next lint` with direct ESLint invocation and enforce build, type-check, lint, and tests in CI.
 - tag images with immutable commit SHAs; optionally keep `latest` as a convenience pointer.
 - apply Prisma migrations as an explicit, controlled deployment step.
 - retain a previous known-good image and add automated rollback criteria.
@@ -156,7 +156,7 @@ The private repository was checked on 14 September 2026:
 - Add liveness and readiness endpoints.
 - smoke-test HTTP, WebSocket upgrade/join, database connectivity, and media-token issuance after deploy.
 - collect structured logs with request/session correlation that excludes credentials/tokens.
-- measure connected users, active rooms, join latency, Socket.IO event rate, reconnect rate, LiveKit failures, and database latency.
+- export production observability for connected users, active rooms, join latency, event rate, reconnect rate, LiveKit failures, and database latency; the current detailed realtime counters are benchmark-only and optional.
 - add alerting on availability, restart loops, resource pressure, and elevated errors.
 
 ### Availability and scale
@@ -171,6 +171,6 @@ The private repository was checked on 14 September 2026:
 
 - minimize IAM permissions for CI and the EC2 role.
 - rotate application and cloud credentials through managed secret storage.
-- authenticate/authorize media-token requests.
-- apply origin, rate-limit, and payload-validation policy to Socket.IO and token routes.
+- enforce durable room membership for Socket.IO and media-token admission; session and identity validation are already implemented.
+- apply origin and rate-limit policy to Socket.IO and token routes; core room, coordinate, message, and role payload validation is already implemented.
 - avoid logging signed tokens, reset links, or sensitive request values.

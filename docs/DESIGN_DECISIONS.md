@@ -4,7 +4,7 @@ This record explains why the present Social Square architecture looks the way it
 
 ## Socket.IO instead of raw WebSockets
 
-**Decision:** Use Socket.IO rooms and event-based messages for multiplayer coordination.
+**Decision:** Use authenticated Socket.IO rooms and event-based messages for multiplayer coordination.
 
 **Why:** Built-in connection lifecycle, reconnection behavior, room addressing, and a clear named-event API reduced the amount of transport machinery required for the MVP.
 
@@ -58,9 +58,21 @@ This record explains why the present Social Square architecture looks the way it
 
 **Why:** Immediate local feedback and a small implementation surface suit a collaborative workspace MVP where competitive cheating is not the primary threat.
 
-**Cost:** A modified client can report impossible coordinates or speeds. Remote motion can jump because there is no reconciliation/interpolation protocol.
+**Cost:** A modified client can still report impossible speeds or in-map positions. Remote interpolation smooths ordinary snapshots, but the server does not simulate physics or reconcile authoritative world state.
 
-**Revisit when:** World rules, access zones, competitive mechanics, moderation, or unreliable-network quality require server validation/simulation.
+**Revisit when:** World rules, access zones, competitive mechanics, moderation, or adverse-network quality require stronger validation or server simulation.
+
+## Fixed-rate movement snapshots with render-time interpolation
+
+**Decision:** Send moving-avatar snapshots at no more than 20 Hz, send a final stop snapshot immediately, and render remote motion through frame-rate-independent interpolation.
+
+**Why:** Display-rate network emission created redundant fan-out without improving the server's state model. A separate network rate preserves immediate local rendering while reducing movement events. The measured 15-client comparison reduced event volume by 66.7% and median average local server CPU by 45.5% while retaining approximately 1.2 ms p95 loopback latency and zero delivery defects.
+
+**Cost:** Interpolation introduces a small visual delay and is not reconciliation. Large corrections require a snap threshold, and visual smoothness still depends on browser and network behavior not measured by the synthetic harness.
+
+**Revisit when:** Adverse-network or browser measurements justify interpolation buffers, sequence-aware reconciliation, prediction, or an adaptive send rate.
+
+Measured results and limitations are documented in [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md).
 
 ## Separate media and coordination planes
 
@@ -68,7 +80,7 @@ This record explains why the present Social Square architecture looks the way it
 
 **Why:** Small state events and high-bandwidth media have different transport, scaling, and recovery needs. The application can evolve multiplayer state without proxying media.
 
-**Cost:** Identity, admission, disconnect, and recovery must stay consistent across two systems. A user can experience partial connection: game without media or media without complete room state.
+**Cost:** Identity, admission, disconnect, and recovery must stay consistent across two systems. Both now bind identity to the same application access cookie, but durable room-membership policy is not yet shared.
 
 **Revisit when:** Not the separation itself, but the session coordinator. A unified room-session state machine can make partial failures clearer without combining transports.
 

@@ -75,6 +75,8 @@ flowchart LR
     Auth["Password/JWT helpers"]
     DB["PostgreSQL"]
     Proxy["Edge route proxy"]
+    Socket["Socket.IO middleware"]
+    Media["LiveKit token authorization"]
 
     Browser -->|credentials or OAuth callback| Handler
     Handler --> Auth
@@ -83,6 +85,10 @@ flowchart LR
     Browser -->|access cookie| Proxy
     Proxy -->|valid| Protected["Protected route"]
     Proxy -->|missing/invalid| Login["Login redirect"]
+    Browser -->|access cookie| Socket
+    Browser -->|access cookie| Media
+    Socket --> Auth
+    Media --> Auth
 ```
 
 ### Password signup/login
@@ -125,6 +131,15 @@ The Next.js 16 proxy protects room, join, profile, settings, onboarding, and pla
 
 Route checks are useful navigation/security gates, but sensitive API handlers also validate tokens themselves. UI hiding is never treated as authorization.
 
+## Realtime identity boundaries
+
+The same application access token now protects both realtime control planes:
+
+- Socket.IO middleware extracts and verifies the HTTP-only cookie before accepting a connection. The server stores the JWT identity on the socket and derives usernames and joined-room context from server state.
+- LiveKit token authorization requires the access cookie, validates the room ID, rejects a requested username that does not match the JWT, and signs the media grant for the verified username.
+
+Neither path yet verifies a durable `RoomMember` record because the current room flow does not use the PostgreSQL room models. Authentication and identity binding are implemented; database-backed room authorization remains pending.
+
 ## HTTP API surface
 
 | Endpoint | Method | Gate | Responsibility |
@@ -143,7 +158,7 @@ Route checks are useful navigation/security gates, but sensitive API handlers al
 | `/api/auth/oauth/callback/github` | GET | Matching OAuth state | Exchange identity and issue application session |
 | `/api/user/profile` | PUT | Access cookie | Validate and update onboarding/profile data |
 | `/api/upload/avatar` | POST | Access cookie or signup user ID | Validate, write, and associate an avatar |
-| `/api/livekit/token` | GET | Room/username parameters | Issue LiveKit join/publish/subscribe token |
+| `/api/livekit/token` | GET | Access cookie + valid room/identity request | Issue a LiveKit grant bound to the authenticated user |
 
 The media-token endpoint is registered in the custom Express server. The other endpoints are Next.js App Router handlers.
 
@@ -178,9 +193,9 @@ The live join/create UI currently routes directly to `/room/[roomId]`; it does n
 
 ## Security hardening priorities
 
-1. Require an authenticated user and authorized room membership for media tokens.
-2. bind Socket.IO identity to the authenticated application session rather than a client-supplied username.
-3. validate and rate-limit real-time payloads.
+1. Connect Socket.IO and LiveKit admission to durable room membership and policy.
+2. add connection and event rate limits; payload shape, length, allowlists, and finite movement coordinates are already validated.
+3. enforce speed and map boundaries if world position becomes security-relevant.
 4. verify ownership for all avatar upload paths and migrate storage outside the container.
 5. hash or rotate stored refresh-token material according to the final threat model.
 6. integrate transactional reset email without logging reset links in production.

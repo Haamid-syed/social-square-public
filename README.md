@@ -31,7 +31,7 @@
 
 ## Current status
 
-**Social Square is a working, deployed MVP at [socialsquare.tech](https://socialsquare.tech).** The production application is containerized on AWS, persists account and profile data in managed PostgreSQL, and uses LiveKit Cloud for real-time media. This blueprint was verified against the private implementation on **14 September 2026**.
+**Social Square is a working, deployed MVP at [socialsquare.tech](https://socialsquare.tech).** The production application is containerized on AWS, persists account and profile data in managed PostgreSQL, and uses LiveKit Cloud for real-time media. This blueprint was reconciled with the private implementation on **15 September 2026**.
 
 | Area | Current state |
 |---|---|
@@ -43,8 +43,9 @@
 | Durable data | Users, profiles, refresh tokens, reset tokens, and room-related schema |
 | Ephemeral data | Active players, ownership, roles, table assignments, and chat |
 | Delivery | GitHub Actions to AWS ECR to AWS Systems Manager to Docker on EC2 |
+| Verification | Production build and type-check pass; all 10 focused automated tests pass |
 
-The implementation already calculates avatar-to-avatar distance, but proximity-based media attenuation and visibility are not enabled in the current release. Audio and video are room-wide today. See [Current state and roadmap](docs/CURRENT_STATE.md) for an exact implemented/partial/planned breakdown.
+The current release deliberately keeps audio and video room-wide. Earlier dormant avatar-distance calculations were removed because no enabled feature consumed them; proximity media remains future work. See [Current state and roadmap](docs/CURRENT_STATE.md) for an exact implemented/partial/planned breakdown.
 
 ## What the product does
 
@@ -104,7 +105,8 @@ One custom Node process owns the application HTTP listener. It prepares Next.js,
 
 - 2D Tiled workspace rendered with Phaser 3 and Arcade Physics.
 - WASD/arrow-key movement, directional animation, collisions, camera follow, pixel rendering, responsive resize, and adaptive zoom.
-- Socket.IO synchronization for joining, existing players, movement, disconnection, ownership, roles, and table assignments.
+- Authenticated Socket.IO synchronization for joining, movement, disconnection, ownership, roles, and table assignments.
+- Movement snapshots capped at 20 Hz while local and remote avatars render at display frame rate; remote positions are interpolated between snapshots.
 - Four table zones whose labels can be assigned by the room owner; matching participants receive an in-world welcome state.
 
 ### Live collaboration
@@ -112,7 +114,7 @@ One custom Node process owns the application HTTP listener. It prepares Next.js,
 - LiveKit audio/video rooms with local publishing, automatic remote subscription, adaptive streaming, dynacast, and reconnect handling.
 - Microphone, camera, and screen-share controls with a responsive meeting grid.
 - A floating local-camera bubble that tracks the local avatar while the meeting panel is closed.
-- Room chat, join/leave notices, participant media states, and owner-controlled coordination roles.
+- Room chat with a 300-message browser cap, join/leave notices, event-driven participant media state, and owner-controlled coordination roles.
 
 ### Accounts and profiles
 
@@ -121,6 +123,24 @@ One custom Node process owns the application HTTP listener. It prepares Next.js,
 - Short-lived access tokens and database-backed refresh tokens in HTTP-only cookies.
 - Student/remote-worker onboarding, profile editing, avatar upload, password change, and password-reset token flow.
 - Protected application routes and an onboarding guard.
+- Authenticated Socket.IO handshakes and LiveKit token issuance bound to the signed-in application identity.
+
+## Verification and measured performance
+
+The current focused verification suite passes:
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | Pass |
+| `npm test` | 10 passed, 0 failed, 0 skipped |
+| `npm run build` | Pass with Next.js 16.2.3; 27 routes/pages generated or registered |
+| Docker server TypeScript compilation | Pass in a temporary output directory |
+
+The 10 tests cover movement throttling and interpolation, LiveKit authorization, Socket.IO authentication, room isolation, movement, chat, explicit leave, disconnect cleanup, and owner handoff.
+
+The reproducible Socket.IO harness uses authenticated synthetic Node.js clients against the production realtime handler. In the repeated 15-client comparison, reducing movement snapshots from 60 Hz to 20 Hz reduced emitted events and recipient fan-out by **66.7%**, while median average server CPU fell from **19.7% to 10.7%** and p95 sender-to-recipient latency remained effectively flat at **1.2 ms**. The largest optimized run used **240 clients across 16 rooms**, sustained **67,207.5 recipient deliveries/second** at **1.1 ms p95**, and recorded zero missing deliveries, duplicate deliveries, or unexpected disconnects.
+
+These are Apple M1 local-loopback Socket.IO measurements. They do not measure browser rendering, PostgreSQL, LiveKit/WebRTC, the EC2 deployment, or production capacity. See [Verification and benchmarks](docs/VERIFICATION_AND_BENCHMARKS.md) for methodology, thresholds, the baseline/optimized comparison, soak results, and the complete test list.
 
 ## Engineering blueprint
 
@@ -132,6 +152,8 @@ One custom Node process owns the application HTTP listener. It prepares Next.js,
 | [Data, auth, and API](docs/DATA_AUTH_API.md) | Persistent models, token lifecycle, route protection, uploads, and the HTTP surface |
 | [Deployment and operations](docs/DEPLOYMENT_OPERATIONS.md) | Container topology, CI/CD path, configuration boundaries, failure modes, and operational gaps |
 | [Design decisions](docs/DESIGN_DECISIONS.md) | Why the project uses Socket.IO, LiveKit, Phaser, a custom server, and mixed durable/ephemeral state |
+| [Engineering change log](docs/CHANGELOG.md) | Build, security, correctness, performance, verification, and cleanup changes delivered on 15 September 2026 |
+| [Verification and benchmarks](docs/VERIFICATION_AND_BENCHMARKS.md) | Test coverage, benchmark methodology, thresholds, results, limitations, and reproducibility |
 | [Current state and roadmap](docs/CURRENT_STATE.md) | What is implemented, partial, modeled only, or still planned |
 | [Full architecture map](docs/FULL_ARCHITECTURE_MAP.md) | Compact end-to-end reference for the entire system |
 
