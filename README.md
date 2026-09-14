@@ -8,6 +8,8 @@
 <p align="center">
   <a href="https://socialsquare.tech"><strong>Live application</strong></a>
   ·
+  <a href="https://www.youtube.com/watch?v=hMgD_D21UHY"><strong>Video demo</strong></a>
+  ·
   <a href="docs/README.md"><strong>Engineering blueprint</strong></a>
   ·
   <a href="https://github.com/Haamid-syed/Social-Square"><strong>Private implementation</strong></a>
