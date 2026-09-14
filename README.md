@@ -142,6 +142,20 @@ The reproducible Socket.IO harness uses authenticated synthetic Node.js clients 
 
 These are Apple M1 local-loopback Socket.IO measurements. They do not measure browser rendering, PostgreSQL, LiveKit/WebRTC, the EC2 deployment, or production capacity. See [Verification and benchmarks](docs/VERIFICATION_AND_BENCHMARKS.md) for methodology, thresholds, the baseline/optimized comparison, soak results, and the complete test list.
 
+## Latest engineering update
+
+The 15 September 2026 update strengthened the implementation across its main runtime boundaries:
+
+- Build and type safety were restored for Next.js 16.2.3, with `src/proxy.ts` established as the single route-protection entry point. The production build and standalone type-check pass; the legacy `next lint` command still requires migration.
+- Socket.IO connections now require the application access-token cookie. The server derives identity and room membership from verified state, validates movement and chat payloads, and restricts roles and table identifiers through allowlists.
+- LiveKit token issuance now authenticates the application session, validates the room and requested username, and binds the media identity to the verified JWT identity.
+- Explicit leave and disconnect use the same cleanup path, including room deletion and owner handoff. `room-state-update` is now the single initial realtime state source.
+- Movement transmission is capped at 20 snapshots per second with a final stop snapshot, remote interpolation, and large-correction snapping. Chat history is bounded, participant updates are debounced, and participant counts are event-driven.
+- Ten focused tests cover movement policy, LiveKit authorization, and Socket.IO authentication and lifecycle behavior. The authenticated benchmark harness records delivery integrity, latency, throughput, CPU, and memory against declared thresholds.
+- Unused direct dependencies and the stale compiled server artifact were removed; Docker continues to compile the custom server during image creation.
+
+Durable database-backed room admission, multi-instance realtime state, proximity-based media, broader API/browser testing, production-environment load testing, and deployment rollback remain future work.
+
 ## Engineering blueprint
 
 | Document | What it answers |
@@ -152,7 +166,6 @@ These are Apple M1 local-loopback Socket.IO measurements. They do not measure br
 | [Data, auth, and API](docs/DATA_AUTH_API.md) | Persistent models, token lifecycle, route protection, uploads, and the HTTP surface |
 | [Deployment and operations](docs/DEPLOYMENT_OPERATIONS.md) | Container topology, CI/CD path, configuration boundaries, failure modes, and operational gaps |
 | [Design decisions](docs/DESIGN_DECISIONS.md) | Why the project uses Socket.IO, LiveKit, Phaser, a custom server, and mixed durable/ephemeral state |
-| [Engineering change log](docs/CHANGELOG.md) | Build, security, correctness, performance, verification, and cleanup changes delivered on 15 September 2026 |
 | [Verification and benchmarks](docs/VERIFICATION_AND_BENCHMARKS.md) | Test coverage, benchmark methodology, thresholds, results, limitations, and reproducibility |
 | [Current state and roadmap](docs/CURRENT_STATE.md) | What is implemented, partial, modeled only, or still planned |
 | [Full architecture map](docs/FULL_ARCHITECTURE_MAP.md) | Compact end-to-end reference for the entire system |

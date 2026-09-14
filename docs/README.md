@@ -5,7 +5,7 @@ This directory documents the current private Social Square implementation withou
 ## Suggested reading paths
 
 - **Project overview:** [Main README](../README.md), [Architecture](ARCHITECTURE.md), [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md), and [Current state](CURRENT_STATE.md).
-- **Technical review:** [Component map](COMPONENT_MAP.md), [Real-time protocol](REALTIME_PROTOCOL.md), [Data and API](DATA_AUTH_API.md), [Design decisions](DESIGN_DECISIONS.md), and [Engineering change log](CHANGELOG.md).
+- **Technical review:** [Component map](COMPONENT_MAP.md), [Real-time protocol](REALTIME_PROTOCOL.md), [Data and API](DATA_AUTH_API.md), and [Design decisions](DESIGN_DECISIONS.md).
 - **Operations review:** [Deployment and operations](DEPLOYMENT_OPERATIONS.md) and [Full architecture map](FULL_ARCHITECTURE_MAP.md).
 
 ## Document index
@@ -18,9 +18,8 @@ This directory documents the current private Social Square implementation withou
 | 4 | [Data, auth, and API](DATA_AUTH_API.md) | Persistence, identity, cookies, protected routes, and HTTP endpoints |
 | 5 | [Deployment and operations](DEPLOYMENT_OPERATIONS.md) | Image delivery, runtime topology, secrets, persistence, and observability |
 | 6 | [Design decisions](DESIGN_DECISIONS.md) | Architectural choices and their tradeoffs |
-| 7 | [Engineering change log](CHANGELOG.md) | Dated build, security, correctness, performance, verification, and cleanup changes |
-| 8 | [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md) | Automated tests, methodology, thresholds, measured results, and limitations |
-| 9 | [Current state and roadmap](CURRENT_STATE.md) | Implemented, partial, modeled, and planned capabilities |
+| 7 | [Verification and benchmarks](VERIFICATION_AND_BENCHMARKS.md) | Automated tests, methodology, thresholds, measured results, and limitations |
+| 8 | [Current state and roadmap](CURRENT_STATE.md) | Implemented, partial, modeled, and planned capabilities |
 | Reference | [Full architecture map](FULL_ARCHITECTURE_MAP.md) | Compact, cross-cutting map of the complete system |
 
 ## Documentation conventions
